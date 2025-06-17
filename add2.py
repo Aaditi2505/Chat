@@ -16,6 +16,7 @@ import os
 import uuid
 import gradio as gr
 import whisper
+import shutil # Import shutil for directory cleanup
 
 # --- Configuration ---
 # Define the path for saving temporary audio files
@@ -26,27 +27,34 @@ os.makedirs(AUDIO_OUTPUT_DIR, exist_ok=True)
 try:
     df = pd.read_csv("kamaraj_college_faq.csv")
     df.dropna(inplace=True)
+    print("FAQ data loaded successfully.")
 except FileNotFoundError:
     print("Error: 'kamaraj_college_faq.csv' not found. Please ensure the FAQ data file is in the same directory.")
+    print("Exiting program.")
     exit() # Exit if the data file is missing
 
 # Encode answers
 label_encoder = LabelEncoder()
 df["Answer_Label"] = label_encoder.fit_transform(df["Answer"])
+print("Answers encoded.")
 
 # Vectorize questions
 vectorizer = TfidfVectorizer()
 X = vectorizer.fit_transform(df["Question"])
 y = df["Answer_Label"]
+print("Questions vectorized.")
 
 # Train the model
-model = LogisticRegression(max_iter=1000) # Increased max_iter for convergence
+# Increased max_iter for convergence, useful for larger datasets or more complex models
+model = LogisticRegression(max_iter=1000)
 model.fit(X, y)
+print("Model trained successfully.")
 
 # --- Text-to-Speech Function ---
 def save_tts_audio(text):
     """
     Generates an audio file from text using gTTS and returns its path.
+    The file is saved in the configured AUDIO_OUTPUT_DIR.
     """
     tts = gTTS(text=text, lang='en')
     filename = os.path.join(AUDIO_OUTPUT_DIR, f"response_{uuid.uuid4().hex}.mp3")
@@ -54,65 +62,84 @@ def save_tts_audio(text):
     return filename
 
 # --- Load Whisper Model ---
+# Ensure you have an internet connection for the first-time download of the Whisper model
 try:
+    print("Loading Whisper model (this may take a moment)...")
     whisper_model = whisper.load_model("base")
+    print("Whisper model loaded successfully.")
 except Exception as e:
     print(f"Error loading Whisper model: {e}")
-    print("Please ensure you have the 'whisper' library installed and internet access for the first-time download.")
+    print("Please ensure you have the 'whisper' library installed and an internet connection for the first-time download.")
+    print("Exiting program.")
     exit()
 
 # --- Chatbot Logic ---
 def chatbot(audio=None, text=None):
+    """
+    Main chatbot function that processes user input (audio or text),
+    predicts an answer, and returns both the text response and an audio file.
+    """
     user_input = ""
-    response_audio_path = None
+    response_audio_path = None # Initialize to None for cases where audio isn't generated
 
     if audio:
         try:
+            print(f"Transcribing audio from: {audio}")
             result = whisper_model.transcribe(audio)
             user_input = result["text"]
+            print(f"Audio transcribed: '{user_input}'")
         except Exception as e:
+            print(f"Error during audio transcription: {e}")
             return "❗ An error occurred during audio transcription. Please try again or type your question.", None
     elif text:
         user_input = text
+        print(f"Received text input: '{user_input}'")
     else:
         return "❗ Please ask a question via text or voice.", None
 
     if not user_input.strip():
-        return "❗ It seems you didn't provide a question. Please try again.", None
+        return "❗ It seems you didn't provide a clear question. Please try again.", None
 
-    # Predict answer
+    # Predict answer based on the user's question
     vec = vectorizer.transform([user_input])
     prediction = model.predict(vec)[0]
     answer = label_encoder.inverse_transform([prediction])[0]
+    print(f"Predicted answer: '{answer}'")
 
     # Generate and save audio for the answer
     response_audio_path = save_tts_audio(answer)
+    print(f"Answer audio saved to: {response_audio_path}")
 
-    # Return both text and audio
-    return f"🗣️ You asked: {user_input}\n✅ Answer: {answer}", response_audio_path
+    # Return both the text and the path to the generated audio file
+    return f"🗣️ You asked: **{user_input}**\n✅ Answer: **{answer}**", response_audio_path
 
 # --- Gradio Interface ---
+print("Setting up Gradio interface...")
 iface = gr.Interface(
-    fn=chatbot,
+    fn=chatbot, # The function to call when the user interacts
     inputs=[
         gr.Audio(sources=["microphone"], type="filepath", label="🎤 Speak your question"),
         gr.Textbox(lines=2, placeholder="Or type your question here", label="📝 Type your question")
     ],
     outputs=[
-        gr.Textbox(label="Chatbot Response"),
-        gr.Audio(label="Spoken Answer", type="filepath") # Use Gradio's Audio output for playback
+        gr.Markdown(label="Chatbot Response"), # Using Markdown to allow bold text in output
+        gr.Audio(label="Spoken Answer", type="filepath", autoplay=True) # Autoplay the audio
     ],
     title="🎓 Kamaraj College FAQ Chatbot",
     description="Ask about Kamaraj College by voice or text. The chatbot will respond and speak the answer.",
-    allow_flagging="never" # Disable flagging
+    allow_flagging="never", # Disables the "Flag" button in Gradio
+    theme="soft" # A pleasant, soft theme for the UI
 )
 
+print("Launching Gradio interface...")
 iface.launch()
 
-# Optional: Clean up temporary audio files on exit (can be added if desired)
-# import atexit
-# def cleanup_audio_files():
-#     import shutil
-#     if os.path.exists(AUDIO_OUTPUT_DIR):
-#         shutil.rmtree(AUDIO_OUTPUT_DIR)
-# atexit.register(cleanup_audio_files)
+# --- Cleanup ---
+# Function to clean up the temporary audio directory when the script exits
+def cleanup_audio_files():
+    if os.path.exists(AUDIO_OUTPUT_DIR):
+        print(f"Cleaning up temporary audio directory: {AUDIO_OUTPUT_DIR}")
+        shutil.rmtree(AUDIO_OUTPUT_DIR)
+
+import atexit
+atexit.register(cleanup_audio_files) # Register the cleanup function to run on exit
