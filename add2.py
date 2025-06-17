@@ -7,6 +7,9 @@ Original file is located at
     https://colab.research.google.com/drive/17H7GeXLk5E9wbHMdY1tS4bPDVAQNMKMj
 """
  
+
+
+
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import LabelEncoder
@@ -21,31 +24,35 @@ import shutil # Import shutil for directory cleanup
 # --- Configuration ---
 # Define the path for saving temporary audio files
 AUDIO_OUTPUT_DIR = "temp_audio"
+# Ensure the directory exists; create it if it doesn't
 os.makedirs(AUDIO_OUTPUT_DIR, exist_ok=True)
 
 # --- Data Loading and Model Training ---
 try:
+    # Load FAQ data from the CSV file
     df = pd.read_csv("kamaraj_college_faq.csv")
+    # Drop rows with any missing values to ensure clean data for training
     df.dropna(inplace=True)
     print("FAQ data loaded successfully.")
 except FileNotFoundError:
+    # If the CSV file is not found, print an error and exit
     print("Error: 'kamaraj_college_faq.csv' not found. Please ensure the FAQ data file is in the same directory.")
     print("Exiting program.")
-    exit() # Exit if the data file is missing
+    exit()
 
-# Encode answers
+# Encode answers into numerical labels for the model
 label_encoder = LabelEncoder()
 df["Answer_Label"] = label_encoder.fit_transform(df["Answer"])
 print("Answers encoded.")
 
-# Vectorize questions
+# Vectorize questions using TF-IDF to convert text into numerical features
 vectorizer = TfidfVectorizer()
-X = vectorizer.fit_transform(df["Question"])
-y = df["Answer_Label"]
+X = vectorizer.fit_transform(df["Question"]) # Features (questions)
+y = df["Answer_Label"] # Target (encoded answers)
 print("Questions vectorized.")
 
-# Train the model
-# Increased max_iter for convergence, useful for larger datasets or more complex models
+# Train a Logistic Regression model
+# Increased max_iter to help the model converge for complex datasets
 model = LogisticRegression(max_iter=1000)
 model.fit(X, y)
 print("Model trained successfully.")
@@ -53,18 +60,21 @@ print("Model trained successfully.")
 # --- Text-to-Speech Function ---
 def save_tts_audio(text):
     """
-    Generates an audio file from text using gTTS and returns its path.
-    The file is saved in the configured AUDIO_OUTPUT_DIR.
+    Generates an audio file from text using Google Text-to-Speech (gTTS)
+    and saves it to the temporary audio directory.
+    Returns the file path of the saved audio.
     """
     tts = gTTS(text=text, lang='en')
+    # Create a unique filename to prevent conflicts
     filename = os.path.join(AUDIO_OUTPUT_DIR, f"response_{uuid.uuid4().hex}.mp3")
     tts.save(filename)
     return filename
 
 # --- Load Whisper Model ---
-# Ensure you have an internet connection for the first-time download of the Whisper model
+# Load the Whisper ASR model for transcribing audio.
+# The "base" model is a good balance of size and accuracy for general use.
 try:
-    print("Loading Whisper model (this may take a moment)...")
+    print("Loading Whisper model (this may take a moment on first run)...")
     whisper_model = whisper.load_model("base")
     print("Whisper model loaded successfully.")
 except Exception as e:
@@ -76,12 +86,14 @@ except Exception as e:
 # --- Chatbot Logic ---
 def chatbot(audio=None, text=None):
     """
-    Main chatbot function that processes user input (audio or text),
-    predicts an answer, and returns both the text response and an audio file.
+    The core chatbot function that handles user input (audio or text).
+    It transcribes audio if provided, predicts an answer, generates speech for the answer,
+    and returns both the text response and the path to the audio file.
     """
     user_input = ""
-    response_audio_path = None # Initialize to None for cases where audio isn't generated
+    response_audio_path = None # Will store the path to the spoken answer
 
+    # Process audio input if available
     if audio:
         try:
             print(f"Transcribing audio from: {audio}")
@@ -91,55 +103,66 @@ def chatbot(audio=None, text=None):
         except Exception as e:
             print(f"Error during audio transcription: {e}")
             return "❗ An error occurred during audio transcription. Please try again or type your question.", None
+    # Process text input if audio is not available
     elif text:
         user_input = text
         print(f"Received text input: '{user_input}'")
     else:
+        # If no input is provided, prompt the user
         return "❗ Please ask a question via text or voice.", None
 
+    # Validate that the user input is not empty after processing
     if not user_input.strip():
         return "❗ It seems you didn't provide a clear question. Please try again.", None
 
-    # Predict answer based on the user's question
-    vec = vectorizer.transform([user_input])
-    prediction = model.predict(vec)[0]
-    answer = label_encoder.inverse_transform([prediction])[0]
+    # Use the trained model to predict the answer
+    vec = vectorizer.transform([user_input]) # Transform user input using the trained vectorizer
+    prediction = model.predict(vec)[0] # Get the predicted label
+    answer = label_encoder.inverse_transform([prediction])[0] # Convert label back to original answer text
     print(f"Predicted answer: '{answer}'")
 
-    # Generate and save audio for the answer
+    # Generate and save the audio for the predicted answer
     response_audio_path = save_tts_audio(answer)
     print(f"Answer audio saved to: {response_audio_path}")
 
-    # Return both the text and the path to the generated audio file
+    # Return the text response and the audio file path for Gradio to display
+    # Using Markdown for the text output to allow for bold formatting
     return f"🗣️ You asked: **{user_input}**\n✅ Answer: **{answer}**", response_audio_path
 
 # --- Gradio Interface ---
 print("Setting up Gradio interface...")
 iface = gr.Interface(
-    fn=chatbot, # The function to call when the user interacts
+    fn=chatbot, # The Python function to call when the UI is interacted with
     inputs=[
+        # Input for microphone audio
         gr.Audio(sources=["microphone"], type="filepath", label="🎤 Speak your question"),
+        # Input for typing questions
         gr.Textbox(lines=2, placeholder="Or type your question here", label="📝 Type your question")
     ],
     outputs=[
-        gr.Markdown(label="Chatbot Response"), # Using Markdown to allow bold text in output
-        gr.Audio(label="Spoken Answer", type="filepath", autoplay=True) # Autoplay the audio
+        # Output for the text response (using Markdown for rich text)
+        gr.Markdown(label="Chatbot Response"),
+        # Output for the spoken answer (Gradio will render an audio player)
+        gr.Audio(label="Spoken Answer", type="filepath", autoplay=True) # autoplay=True plays audio automatically
     ],
     title="🎓 Kamaraj College FAQ Chatbot",
     description="Ask about Kamaraj College by voice or text. The chatbot will respond and speak the answer.",
-    allow_flagging="never", # Disables the "Flag" button in Gradio
-    theme="soft" # A pleasant, soft theme for the UI
+    allow_flagging="never", # Disables the "Flag" button for feedback (often not needed for demos)
+    theme="soft" # Applies a pleasant, soft visual theme to the Gradio UI
 )
 
-print("Launching Gradio interface...")
+print("Launching Gradio interface. Open the public URL in your browser.")
+# Launch the Gradio interface. It will provide a local URL and potentially a public share link.
 iface.launch()
 
 # --- Cleanup ---
-# Function to clean up the temporary audio directory when the script exits
+# This section ensures that the temporary audio files are deleted when the script exits.
 def cleanup_audio_files():
     if os.path.exists(AUDIO_OUTPUT_DIR):
         print(f"Cleaning up temporary audio directory: {AUDIO_OUTPUT_DIR}")
+        # Remove the directory and all its contents
         shutil.rmtree(AUDIO_OUTPUT_DIR)
 
 import atexit
-atexit.register(cleanup_audio_files) # Register the cleanup function to run on exit
+# Register the cleanup function to be called automatically when the program terminates
+atexit.register(cleanup_audio_files)
