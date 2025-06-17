@@ -7,63 +7,8 @@ Original file is located at
     https://colab.research.google.com/drive/17H7GeXLk5E9wbHMdY1tS4bPDVAQNMKMj
 """
 
-
+# --- Imports ---
 import streamlit as st
-import pandas as pd
-from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import LabelEncoder
-from sklearn.feature_extraction.text import TfidfVectorizer
-
-# Set up the Streamlit page
-st.set_page_config(page_title="Kamaraj College FAQ Chatbot", layout="centered")
-
-# Load model and data (with caching)
-@st.cache_resource
-def load_model_and_data():
-    # Load the dataset
-    df = pd.read_csv("kamaraj_college_faq.csv")
-    df.dropna(inplace=True)
-
-    # Encode answers to numerical labels
-    le = LabelEncoder()
-    df["Answer_Label"] = le.fit_transform(df["Answer"])
-
-    # Vectorize questions
-    vectorizer = TfidfVectorizer()
-    X = vectorizer.fit_transform(df["Question"])
-    y = df["Answer_Label"]
-
-    # Train a logistic regression model
-    model = LogisticRegression()
-    model.fit(X, y)
-
-    return model, vectorizer, le
-
-# Load model, vectorizer, and encoder
-model, vectorizer, label_encoder = load_model_and_data()
-
-# App title
-st.title("🎓 Kamaraj College FAQ Chatbot")
-st.markdown("Ask me anything related to **Kamaraj College of Engineering and Technology**! 🤖")
-
-# User input
-user_question = st.text_input("💬 Type your question here:")
-
-# Button to get answer
-if st.button("🔍 Get Answer"):
-    if not user_question.strip():
-        st.warning("⚠️ Please enter a valid question.")
-    else:
-        # Vectorize user input and predict answer
-        user_vector = vectorizer.transform([user_question])
-        predicted_label = model.predict(user_vector)[0]
-        predicted_answer = label_encoder.inverse_transform([predicted_label])[0]
-
-        # Display answer
-        st.success(f"🟢 **Answer:** {predicted_answer}")
-
-
-
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import LabelEncoder
@@ -72,62 +17,86 @@ import pyttsx3
 import gradio as gr
 import whisper
 
-# Load CSV and train model
-df = pd.read_csv("kamaraj_college_faq.csv")
-df.dropna(inplace=True)
+# --- Load Model and Data (Shared for Streamlit + Gradio) ---
+@st.cache_resource
+def load_model_and_data():
+    df = pd.read_csv("kamaraj_college_faq.csv")
+    df.dropna(inplace=True)
 
-le = LabelEncoder()
-df["Answer_Label"] = le.fit_transform(df["Answer"])
+    le = LabelEncoder()
+    df["Answer_Label"] = le.fit_transform(df["Answer"])
 
-vectorizer = TfidfVectorizer()
-X = vectorizer.fit_transform(df["Question"])
-y = df["Answer_Label"]
+    vectorizer = TfidfVectorizer()
+    X = vectorizer.fit_transform(df["Question"])
+    y = df["Answer_Label"]
 
-model = LogisticRegression()
-model.fit(X, y)
+    model = LogisticRegression()
+    model.fit(X, y)
 
-# Text-to-speech function
-def speak_text(text):
-    engine = pyttsx3.init()
-    engine.setProperty('rate', 150)
-    engine.say(text)
-    engine.runAndWait()
+    return model, vectorizer, le, df
 
-# Load whisper model for transcription
-whisper_model = whisper.load_model("base")
+# Load resources
+model, vectorizer, label_encoder, df = load_model_and_data()
 
-# Combined chatbot function
-def chatbot(audio=None, text=None):
-    # If user speaks, transcribe it
-    if audio is not None:
-        audio_path = audio  # This is a temp .wav file
-        result = whisper_model.transcribe(audio_path)
-        user_input = result["text"]
-    elif text:
-        user_input = text
+# --- STREAMLIT UI ---
+st.set_page_config(page_title="Kamaraj College FAQ Chatbot", layout="centered")
+st.title("🎓 Kamaraj College FAQ Chatbot")
+st.markdown("Ask me anything related to **Kamaraj College of Engineering and Technology**! 🤖")
+
+user_question = st.text_input("💬 Type your question here:")
+
+if st.button("🔍 Get Answer"):
+    if not user_question.strip():
+        st.warning("⚠️ Please enter a valid question.")
     else:
-        return "Please provide a question."
+        vec = vectorizer.transform([user_question])
+        pred = model.predict(vec)[0]
+        ans = label_encoder.inverse_transform([pred])[0]
+        st.success(f"🟢 **Answer:** {ans}")
 
-    # Predict the answer
-    vec = vectorizer.transform([user_input])
-    prediction = model.predict(vec)[0]
-    answer = le.inverse_transform([prediction])[0]
+# --- Gradio + Whisper Section (Outside Streamlit) ---
+# Only runs when executed as a script, not during Streamlit execution
+if __name__ == "__main__":
+    # Text-to-speech
+    def speak_text(text):
+        engine = pyttsx3.init()
+        engine.setProperty('rate', 150)
+        engine.say(text)
+        engine.runAndWait()
 
-    # Speak answer
-    speak_text(answer)
+    # Load Whisper once
+    whisper_model = whisper.load_model("base")
 
-    return f"🗣️ You asked: {user_input}\n\n✅ Answer: {answer}"
+    # Gradio Chatbot function
+    def chatbot(audio=None, text=None):
+        if audio is not None:
+            result = whisper_model.transcribe(audio)
+            user_input = result["text"]
+        elif text:
+            user_input = text
+        else:
+            return "Please provide a question."
 
-# Gradio Interface
-iface = gr.Interface(
-    fn=chatbot,
-    inputs=[
-        gr.Audio(sources=["microphone"], type="filepath", label="🎤 Speak your question"),
-        gr.Textbox(lines=2, placeholder="Or type your question here", label="📝 Text question")
-    ],
-    outputs="text",
-    title="🎓 Kamaraj College FAQ - Voice + Text Chatbot",
-    description="Ask via microphone or text. It will answer and speak back.",
-)
+        vec = vectorizer.transform([user_input])
+        pred = model.predict(vec)[0]
+        answer = label_encoder.inverse_transform([pred])[0]
 
-iface.launch()
+        speak_text(answer)
+        return f"🗣️ You asked: {user_input}\n\n✅ Answer: {answer}"
+
+    # Gradio Interface
+    iface = gr.Interface(
+        fn=chatbot,
+        inputs=[
+            gr.Audio(sources=["microphone"], type="filepath", label="🎤 Speak your question"),
+            gr.Textbox(lines=2, placeholder="Or type your question here", label="📝 Text question")
+        ],
+        outputs="text",
+        title="🎓 Kamaraj College FAQ - Voice + Text Chatbot",
+        description="Ask via microphone or text. It will answer and speak back.",
+    )
+
+    iface.launch()
+
+   
+  
