@@ -7,7 +7,6 @@ Original file is located at
     https://colab.research.google.com/drive/17H7GeXLk5E9wbHMdY1tS4bPDVAQNMKMj
 """
 
-# --- Imports ---
 import streamlit as st
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
@@ -35,22 +34,20 @@ def load_model_and_data():
 
     return model, vectorizer, le
 
-# Shared model for both apps
 model, vectorizer, label_encoder = load_model_and_data()
 
-# --- Streamlit Chatbot UI ---
+# --- Streamlit UI ---
 def run_streamlit_ui():
     st.set_page_config(page_title="Kamaraj College FAQ Chatbot", layout="centered")
     st.title("🎓 Kamaraj College FAQ Chatbot")
-    st.markdown("Ask me anything related to **Kamaraj College of Engineering and Technology**! 🤖")
+    st.markdown("Ask anything about **Kamaraj College of Engineering and Technology** 🤖")
 
-    user_question = st.text_input("💬 Type your question here:")
-
+    question = st.text_input("💬 Ask a question:")
     if st.button("🔍 Get Answer"):
-        if not user_question.strip():
-            st.warning("⚠️ Please enter a valid question.")
+        if not question.strip():
+            st.warning("❗ Please ask a question.")
         else:
-            vec = vectorizer.transform([user_question])
+            vec = vectorizer.transform([question])
             pred = model.predict(vec)[0]
             ans = label_encoder.inverse_transform([pred])[0]
             st.success(f"🟢 **Answer:** {ans}")
@@ -62,25 +59,25 @@ def speak_text(text):
     engine.say(text)
     engine.runAndWait()
 
-# --- Gradio Chatbot ---
+# --- Gradio UI ---
 def run_gradio_ui():
     whisper_model = whisper.load_model("base")
 
     def chatbot(audio=None, text=None):
-        if audio is not None:
+        if audio:
             result = whisper_model.transcribe(audio)
             user_input = result["text"]
         elif text:
             user_input = text
         else:
-            return "Please provide a question."
+            return "❗ Please provide a question."
 
         vec = vectorizer.transform([user_input])
         pred = model.predict(vec)[0]
         answer = label_encoder.inverse_transform([pred])[0]
 
         speak_text(answer)
-        return f"🗣️ You asked: {user_input}\n\n✅ Answer: {answer}"
+        return f"🗣️ You asked: {user_input}\n✅ Answer: {answer}"
 
     iface = gr.Interface(
         fn=chatbot,
@@ -89,13 +86,13 @@ def run_gradio_ui():
             gr.Textbox(lines=2, placeholder="Or type your question here", label="📝 Text question")
         ],
         outputs="text",
-        title="🎓 Kamaraj College FAQ - Voice + Text Chatbot",
-        description="Ask via microphone or text. It will answer and speak back.",
+        title="🎓 Kamaraj FAQ Chatbot (Voice + Text)",
+        description="Ask about Kamaraj College via microphone or text.",
     )
     iface.launch()
 
-# --- Entry Point ---
+# --- Main Entry ---
 if __name__ == "__main__":
-    # Comment out one of the below depending on which UI you want to run
-    # run_streamlit_ui()  # For Streamlit interface
-    run_gradio_ui()       # For Gradio interface
+    # Uncomment ONLY ONE of these:
+    # run_streamlit_ui()  # for Streamlit interface
+    run_gradio_ui()       # for Gradio interface
