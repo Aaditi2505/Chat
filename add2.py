@@ -17,7 +17,7 @@ import pyttsx3
 import gradio as gr
 import whisper
 
-# --- Load Model and Data (Shared for Streamlit + Gradio) ---
+# --- Load Model and Data ---
 @st.cache_resource
 def load_model_and_data():
     df = pd.read_csv("kamaraj_college_faq.csv")
@@ -33,41 +33,39 @@ def load_model_and_data():
     model = LogisticRegression()
     model.fit(X, y)
 
-    return model, vectorizer, le, df
+    return model, vectorizer, le
 
-# Load resources
-model, vectorizer, label_encoder, df = load_model_and_data()
+# Shared model for both apps
+model, vectorizer, label_encoder = load_model_and_data()
 
-# --- STREAMLIT UI ---
-st.set_page_config(page_title="Kamaraj College FAQ Chatbot", layout="centered")
-st.title("🎓 Kamaraj College FAQ Chatbot")
-st.markdown("Ask me anything related to **Kamaraj College of Engineering and Technology**! 🤖")
+# --- Streamlit Chatbot UI ---
+def run_streamlit_ui():
+    st.set_page_config(page_title="Kamaraj College FAQ Chatbot", layout="centered")
+    st.title("🎓 Kamaraj College FAQ Chatbot")
+    st.markdown("Ask me anything related to **Kamaraj College of Engineering and Technology**! 🤖")
 
-user_question = st.text_input("💬 Type your question here:")
+    user_question = st.text_input("💬 Type your question here:")
 
-if st.button("🔍 Get Answer"):
-    if not user_question.strip():
-        st.warning("⚠️ Please enter a valid question.")
-    else:
-        vec = vectorizer.transform([user_question])
-        pred = model.predict(vec)[0]
-        ans = label_encoder.inverse_transform([pred])[0]
-        st.success(f"🟢 **Answer:** {ans}")
+    if st.button("🔍 Get Answer"):
+        if not user_question.strip():
+            st.warning("⚠️ Please enter a valid question.")
+        else:
+            vec = vectorizer.transform([user_question])
+            pred = model.predict(vec)[0]
+            ans = label_encoder.inverse_transform([pred])[0]
+            st.success(f"🟢 **Answer:** {ans}")
 
-# --- Gradio + Whisper Section (Outside Streamlit) ---
-# Only runs when executed as a script, not during Streamlit execution
-if __name__ == "__main__":
-    # Text-to-speech
-    def speak_text(text):
-        engine = pyttsx3.init()
-        engine.setProperty('rate', 150)
-        engine.say(text)
-        engine.runAndWait()
+# --- Text-to-Speech ---
+def speak_text(text):
+    engine = pyttsx3.init()
+    engine.setProperty('rate', 150)
+    engine.say(text)
+    engine.runAndWait()
 
-    # Load Whisper once
+# --- Gradio Chatbot ---
+def run_gradio_ui():
     whisper_model = whisper.load_model("base")
 
-    # Gradio Chatbot function
     def chatbot(audio=None, text=None):
         if audio is not None:
             result = whisper_model.transcribe(audio)
@@ -84,7 +82,6 @@ if __name__ == "__main__":
         speak_text(answer)
         return f"🗣️ You asked: {user_input}\n\n✅ Answer: {answer}"
 
-    # Gradio Interface
     iface = gr.Interface(
         fn=chatbot,
         inputs=[
@@ -95,8 +92,10 @@ if __name__ == "__main__":
         title="🎓 Kamaraj College FAQ - Voice + Text Chatbot",
         description="Ask via microphone or text. It will answer and speak back.",
     )
-
     iface.launch()
 
-   
-  
+# --- Entry Point ---
+if __name__ == "__main__":
+    # Comment out one of the below depending on which UI you want to run
+    # run_streamlit_ui()  # For Streamlit interface
+    run_gradio_ui()       # For Gradio interface
