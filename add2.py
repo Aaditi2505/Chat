@@ -17,7 +17,7 @@ import uuid
 import gradio as gr
 import whisper
 
-# --- Load dataset and train model ---
+# Load and prepare dataset
 df = pd.read_csv("kamaraj_college_faq.csv")
 df.dropna(inplace=True)
 
@@ -31,24 +31,26 @@ y = df["Answer_Label"]
 model = LogisticRegression()
 model.fit(X, y)
 
-# --- Text-to-Speech (gTTS) ---
+# Text-to-speech using gTTS
 def speak_text(text):
     tts = gTTS(text=text, lang='en')
     filename = f"audio_{uuid.uuid4().hex}.mp3"
     tts.save(filename)
 
-    # Cross-platform audio play
-    if os.name == "nt":
-        os.system(f"start {filename}")  # Windows
-    elif os.uname().sysname == "Darwin":
-        os.system(f"afplay {filename}")  # macOS
-    else:
-        os.system(f"mpg123 {filename}")  # Linux
+    try:
+        if os.name == "nt":  # Windows
+            os.system(f"start {filename}")
+        elif os.uname().sysname == "Darwin":  # macOS
+            os.system(f"afplay {filename}")
+        else:  # Linux
+            os.system(f"mpg123 {filename}")
+    except Exception as e:
+        print("Audio playback failed:", e)
 
-# --- Whisper model load (for speech-to-text) ---
+# Load Whisper model for audio transcription
 whisper_model = whisper.load_model("base")
 
-# --- Chatbot Function ---
+# Main chatbot function
 def chatbot(audio=None, text=None):
     if audio:
         result = whisper_model.transcribe(audio)
@@ -56,19 +58,19 @@ def chatbot(audio=None, text=None):
     elif text:
         user_input = text
     else:
-        return "❗ Please speak or type a question."
+        return "❗ Please provide a question."
 
-    # Predict answer
+    # Predict the answer
     vec = vectorizer.transform([user_input])
     prediction = model.predict(vec)[0]
     answer = label_encoder.inverse_transform([prediction])[0]
 
-    # Speak out the answer
+    # Speak the answer
     speak_text(answer)
 
     return f"🗣️ You asked: {user_input}\n✅ Answer: {answer}"
 
-# --- Gradio Interface ---
+# Gradio Interface
 iface = gr.Interface(
     fn=chatbot,
     inputs=[
@@ -77,7 +79,7 @@ iface = gr.Interface(
     ],
     outputs="text",
     title="🎓 Kamaraj College FAQ Chatbot",
-    description="Ask about Kamaraj College by voice or text. The bot will speak the answer too.",
+    description="Ask your question by voice or text. It will speak back the answer!"
 )
 
 iface.launch()
