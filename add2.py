@@ -68,7 +68,7 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import LabelEncoder
 from sklearn.feature_extraction.text import TfidfVectorizer
-
+import pyttsx3
 import gradio as gr
 import whisper
 
