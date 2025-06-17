@@ -17,9 +17,18 @@ import uuid
 import gradio as gr
 import whisper
 
-# Load FAQ data
-df = pd.read_csv("kamaraj_college_faq.csv")
-df.dropna(inplace=True)
+# --- Configuration ---
+# Define the path for saving temporary audio files
+AUDIO_OUTPUT_DIR = "temp_audio"
+os.makedirs(AUDIO_OUTPUT_DIR, exist_ok=True)
+
+# --- Data Loading and Model Training ---
+try:
+    df = pd.read_csv("kamaraj_college_faq.csv")
+    df.dropna(inplace=True)
+except FileNotFoundError:
+    print("Error: 'kamaraj_college_faq.csv' not found. Please ensure the FAQ data file is in the same directory.")
+    exit() # Exit if the data file is missing
 
 # Encode answers
 label_encoder = LabelEncoder()
@@ -31,58 +40,79 @@ X = vectorizer.fit_transform(df["Question"])
 y = df["Answer_Label"]
 
 # Train the model
-model = LogisticRegression()
+model = LogisticRegression(max_iter=1000) # Increased max_iter for convergence
 model.fit(X, y)
 
-# Text-to-speech function using gTTS
-def speak_text(text):
+# --- Text-to-Speech Function ---
+def save_tts_audio(text):
+    """
+    Generates an audio file from text using gTTS and returns its path.
+    """
     tts = gTTS(text=text, lang='en')
-    filename = f"voice_{uuid.uuid4().hex}.mp3"
+    filename = os.path.join(AUDIO_OUTPUT_DIR, f"response_{uuid.uuid4().hex}.mp3")
     tts.save(filename)
+    return filename
 
-    try:
-        if os.name == "nt":  # Windows
-            os.system(f"start {filename}")
-        elif os.uname().sysname == "Darwin":  # macOS
-            os.system(f"afplay {filename}")
-        else:  # Linux
-            os.system(f"mpg123 {filename}")
-    except Exception as e:
-        print("Audio playback failed:", e)
+# --- Load Whisper Model ---
+try:
+    whisper_model = whisper.load_model("base")
+except Exception as e:
+    print(f"Error loading Whisper model: {e}")
+    print("Please ensure you have the 'whisper' library installed and internet access for the first-time download.")
+    exit()
 
-# Load Whisper model
-whisper_model = whisper.load_model("base")
-
-# Chatbot logic
+# --- Chatbot Logic ---
 def chatbot(audio=None, text=None):
+    user_input = ""
+    response_audio_path = None
+
     if audio:
-        result = whisper_model.transcribe(audio)
-        user_input = result["text"]
+        try:
+            result = whisper_model.transcribe(audio)
+            user_input = result["text"]
+        except Exception as e:
+            return "❗ An error occurred during audio transcription. Please try again or type your question.", None
     elif text:
         user_input = text
     else:
-        return "❗ Please ask a question via text or voice."
+        return "❗ Please ask a question via text or voice.", None
+
+    if not user_input.strip():
+        return "❗ It seems you didn't provide a question. Please try again.", None
 
     # Predict answer
     vec = vectorizer.transform([user_input])
     prediction = model.predict(vec)[0]
     answer = label_encoder.inverse_transform([prediction])[0]
 
-    # Speak the answer
-    speak_text(answer)
+    # Generate and save audio for the answer
+    response_audio_path = save_tts_audio(answer)
 
-    return f"🗣️ You asked: {user_input}\n✅ Answer: {answer}"
+    # Return both text and audio
+    return f"🗣️ You asked: {user_input}\n✅ Answer: {answer}", response_audio_path
 
-# Gradio interface
+# --- Gradio Interface ---
 iface = gr.Interface(
     fn=chatbot,
     inputs=[
         gr.Audio(sources=["microphone"], type="filepath", label="🎤 Speak your question"),
         gr.Textbox(lines=2, placeholder="Or type your question here", label="📝 Type your question")
     ],
-    outputs="text",
+    outputs=[
+        gr.Textbox(label="Chatbot Response"),
+        gr.Audio(label="Spoken Answer", type="filepath") # Use Gradio's Audio output for playback
+    ],
     title="🎓 Kamaraj College FAQ Chatbot",
-    description="Ask about Kamaraj College by voice or text. The chatbot will respond and speak the answer."
+    description="Ask about Kamaraj College by voice or text. The chatbot will respond and speak the answer.",
+    allow_flagging="never" # Disable flagging
 )
 
 iface.launch()
+
+# Optional: Clean up temporary audio files on exit (can be added if desired)
+# import atexit
+# def cleanup_audio_files():
+#     import shutil
+#     if os.path.exists(AUDIO_OUTPUT_DIR):
+#         shutil.rmtree(AUDIO_OUTPUT_DIR)
+# atexit.register(cleanup_audio_files)
