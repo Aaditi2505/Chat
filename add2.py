@@ -7,95 +7,77 @@ Original file is located at
     https://colab.research.google.com/drive/17H7GeXLk5E9wbHMdY1tS4bPDVAQNMKMj
 """
  
-    # --- Imports ---
-import streamlit as st
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import LabelEncoder
 from sklearn.feature_extraction.text import TfidfVectorizer
 from gtts import gTTS
 import os
+import uuid
 import gradio as gr
 import whisper
-import uuid
 
-# --- Load model and data ---
-@st.cache_resource
-def load_model_and_data():
-    df = pd.read_csv("kamaraj_college_faq.csv")
-    df.dropna(inplace=True)
+# --- Load dataset and train model ---
+df = pd.read_csv("kamaraj_college_faq.csv")
+df.dropna(inplace=True)
 
-    le = LabelEncoder()
-    df["Answer_Label"] = le.fit_transform(df["Answer"])
+label_encoder = LabelEncoder()
+df["Answer_Label"] = label_encoder.fit_transform(df["Answer"])
 
-    vectorizer = TfidfVectorizer()
-    X = vectorizer.fit_transform(df["Question"])
-    y = df["Answer_Label"]
+vectorizer = TfidfVectorizer()
+X = vectorizer.fit_transform(df["Question"])
+y = df["Answer_Label"]
 
-    model = LogisticRegression()
-    model.fit(X, y)
+model = LogisticRegression()
+model.fit(X, y)
 
-    return model, vectorizer, le
-
-model, vectorizer, label_encoder = load_model_and_data()
-
-# --- Text-to-Speech using gTTS ---
+# --- Text-to-Speech (gTTS) ---
 def speak_text(text):
     tts = gTTS(text=text, lang='en')
-    filename = f"speech_{uuid.uuid4().hex}.mp3"
+    filename = f"audio_{uuid.uuid4().hex}.mp3"
     tts.save(filename)
-    os.system(f"start {filename}" if os.name == "nt" else f"afplay {filename}" if os.uname().sysname == "Darwin" else f"mpg123 {filename}")
 
-# --- Streamlit UI ---
-def run_streamlit_ui():
-    st.set_page_config(page_title="Kamaraj College FAQ Chatbot", layout="centered")
-    st.title("🎓 Kamaraj College FAQ Chatbot")
-    st.markdown("Ask anything about **Kamaraj College of Engineering and Technology** 🤖")
+    # Cross-platform audio play
+    if os.name == "nt":
+        os.system(f"start {filename}")  # Windows
+    elif os.uname().sysname == "Darwin":
+        os.system(f"afplay {filename}")  # macOS
+    else:
+        os.system(f"mpg123 {filename}")  # Linux
 
-    question = st.text_input("💬 Ask a question:")
-    if st.button("🔍 Get Answer"):
-        if not question.strip():
-            st.warning("❗ Please enter a valid question.")
-        else:
-            vec = vectorizer.transform([question])
-            pred = model.predict(vec)[0]
-            ans = label_encoder.inverse_transform([pred])[0]
-            st.success(f"🟢 **Answer:** {ans}")
-            speak_text(ans)
+# --- Whisper model load (for speech-to-text) ---
+whisper_model = whisper.load_model("base")
 
-# --- Gradio Voice/Text UI ---
-def run_gradio_ui():
-    whisper_model = whisper.load_model("base")
+# --- Chatbot Function ---
+def chatbot(audio=None, text=None):
+    if audio:
+        result = whisper_model.transcribe(audio)
+        user_input = result["text"]
+    elif text:
+        user_input = text
+    else:
+        return "❗ Please speak or type a question."
 
-    def chatbot(audio=None, text=None):
-        if audio:
-            result = whisper_model.transcribe(audio)
-            user_input = result["text"]
-        elif text:
-            user_input = text
-        else:
-            return "❗ Please provide a question."
+    # Predict answer
+    vec = vectorizer.transform([user_input])
+    prediction = model.predict(vec)[0]
+    answer = label_encoder.inverse_transform([prediction])[0]
 
-        vec = vectorizer.transform([user_input])
-        pred = model.predict(vec)[0]
-        answer = label_encoder.inverse_transform([pred])[0]
-        speak_text(answer)
-        return f"🗣️ You asked: {user_input}\n✅ Answer: {answer}"
+    # Speak out the answer
+    speak_text(answer)
 
-    iface = gr.Interface(
-        fn=chatbot,
-        inputs=[
-            gr.Audio(sources=["microphone"], type="filepath", label="🎤 Speak your question"),
-            gr.Textbox(lines=2, placeholder="Or type your question here", label="📝 Text question")
-        ],
-        outputs="text",
-        title="🎓 Kamaraj FAQ Chatbot (Voice + Text)",
-        description="Ask about Kamaraj College using voice or text. The bot will speak and reply!",
-    )
-    iface.launch()
+    return f"🗣️ You asked: {user_input}\n✅ Answer: {answer}"
 
-# --- Main Entry Point ---
-if __name__ == "__main__":
-    # Choose only one interface to run
-    # run_streamlit_ui()  # 👉 For Streamlit web app
-    run_gradio_ui()       # 👉 For Gradio voice+text interface
+# --- Gradio Interface ---
+iface = gr.Interface(
+    fn=chatbot,
+    inputs=[
+        gr.Audio(sources=["microphone"], type="filepath", label="🎤 Speak your question"),
+        gr.Textbox(lines=2, placeholder="Or type your question here", label="📝 Text question")
+    ],
+    outputs="text",
+    title="🎓 Kamaraj College FAQ Chatbot",
+    description="Ask about Kamaraj College by voice or text. The bot will speak the answer too.",
+)
+
+iface.launch()
