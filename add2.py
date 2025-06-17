@@ -17,24 +17,27 @@ import uuid
 import gradio as gr
 import whisper
 
-# Load and prepare dataset
+# Load FAQ data
 df = pd.read_csv("kamaraj_college_faq.csv")
 df.dropna(inplace=True)
 
+# Encode answers
 label_encoder = LabelEncoder()
 df["Answer_Label"] = label_encoder.fit_transform(df["Answer"])
 
+# Vectorize questions
 vectorizer = TfidfVectorizer()
 X = vectorizer.fit_transform(df["Question"])
 y = df["Answer_Label"]
 
+# Train the model
 model = LogisticRegression()
 model.fit(X, y)
 
-# Text-to-speech using gTTS
+# Text-to-speech function using gTTS
 def speak_text(text):
     tts = gTTS(text=text, lang='en')
-    filename = f"audio_{uuid.uuid4().hex}.mp3"
+    filename = f"voice_{uuid.uuid4().hex}.mp3"
     tts.save(filename)
 
     try:
@@ -47,10 +50,10 @@ def speak_text(text):
     except Exception as e:
         print("Audio playback failed:", e)
 
-# Load Whisper model for audio transcription
+# Load Whisper model
 whisper_model = whisper.load_model("base")
 
-# Main chatbot function
+# Chatbot logic
 def chatbot(audio=None, text=None):
     if audio:
         result = whisper_model.transcribe(audio)
@@ -58,9 +61,9 @@ def chatbot(audio=None, text=None):
     elif text:
         user_input = text
     else:
-        return "❗ Please provide a question."
+        return "❗ Please ask a question via text or voice."
 
-    # Predict the answer
+    # Predict answer
     vec = vectorizer.transform([user_input])
     prediction = model.predict(vec)[0]
     answer = label_encoder.inverse_transform([prediction])[0]
@@ -70,16 +73,16 @@ def chatbot(audio=None, text=None):
 
     return f"🗣️ You asked: {user_input}\n✅ Answer: {answer}"
 
-# Gradio Interface
+# Gradio interface
 iface = gr.Interface(
     fn=chatbot,
     inputs=[
         gr.Audio(sources=["microphone"], type="filepath", label="🎤 Speak your question"),
-        gr.Textbox(lines=2, placeholder="Or type your question here", label="📝 Text question")
+        gr.Textbox(lines=2, placeholder="Or type your question here", label="📝 Type your question")
     ],
     outputs="text",
     title="🎓 Kamaraj College FAQ Chatbot",
-    description="Ask your question by voice or text. It will speak back the answer!"
+    description="Ask about Kamaraj College by voice or text. The chatbot will respond and speak the answer."
 )
 
 iface.launch()
