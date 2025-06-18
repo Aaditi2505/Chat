@@ -23,7 +23,7 @@ import os
 import time
 
 # Load and train the model
-df = pd.read_csv("kamaraj_college_faq.csv")
+df = pd.read_csv("/content/kamaraj_faq_paraphrased_top10.csv")
 df.dropna(inplace=True)
 
 le = LabelEncoder()
