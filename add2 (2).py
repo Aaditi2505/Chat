@@ -8,122 +8,221 @@ Original file is located at
 """
 
 
-# requirements: pandas, sklearn, streamlit, gtts, playsound, gradio, whisper
-
-# ------------------------------
-# 🧠 Model and Data Preparation
-# ------------------------------
-import pandas as pd
-from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import LabelEncoder
-from sklearn.feature_extraction.text import TfidfVectorizer
-
-df = pd.read_csv("kamaraj_college_faq.csv")
-df.dropna(inplace=True)
-
-le = LabelEncoder()
-df["Answer_Label"] = le.fit_transform(df["Answer"])
-
-vectorizer = TfidfVectorizer()
-X = vectorizer.fit_transform(df["Question"])
-y = df["Answer_Label"]
-
-model = LogisticRegression()
-model.fit(X, y)
-
-# ------------------------------
-# 🔊 Text-to-Speech (gTTS-based fallback)
-# ------------------------------
-try:
-    import pyttsx3
-
-    def speak_text(text):
-        engine = pyttsx3.init()
-        engine.setProperty('rate', 150)
-        engine.say(text)
-        engine.runAndWait()
-
-except ImportError:
-    from gtts import gTTS
-    import playsound
-    import os
-
-    def speak_text(text):
-        tts = gTTS(text=text, lang='en')
-        filename = "temp_voice.mp3"
-        tts.save(filename)
-        playsound.playsound(filename)
-        os.remove(filename)
-
-# ------------------------------
-# 🎧 Whisper Voice Recognition
-# ------------------------------
-import whisper
-whisper_model = whisper.load_model("base")
-
-# ------------------------------
-# 🤖 Gradio Voice+Text Chatbot
-# ------------------------------
-import gradio as gr
-
-def chatbot(audio=None, text=None):
-    if audio is not None:
-        result = whisper_model.transcribe(audio)
-        user_input = result["text"]
-    elif text:
-        user_input = text
-    else:
-        return "❗ Please ask a question."
-
-    vec = vectorizer.transform([user_input])
-    prediction = model.predict(vec)[0]
-    answer = le.inverse_transform([prediction])[0]
-
-    speak_text(answer)
-
-    return f"🗣️ You asked: {user_input}\n\n✅ Answer: {answer}"
-
-def launch_gradio():
-    iface = gr.Interface(
-        fn=chatbot,
-        inputs=[
-            gr.Audio(sources=["microphone"], type="filepath", label="🎤 Speak your question"),
-            gr.Textbox(lines=2, placeholder="Or type your question here", label="📝 Text question")
-        ],
-        outputs="text",
-        title="🎓 Kamaraj College FAQ - Voice + Text Chatbot",
-        description="Ask via microphone or type. It will answer and speak back.",
-    )
-    iface.launch()
-
-# ------------------------------
-# 🖥️ Streamlit Text UI
-# ------------------------------
+# -*- coding: utf-8 -*-
 import streamlit as st
+from streamlit_webrtc import webrtc_streamer, WebRtcMode
+import av
+import queue
+import threading
+import time
+import tempfile
+from gtts import gTTS
+from scipy.io.wavfile import write
+import numpy as np
+import pandas as pd
+import os
+import pickle
+import speech_recognition as sr
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import base64
 
-def launch_streamlit():
-    st.set_page_config(page_title="Kamaraj College FAQ Chatbot", layout="centered")
-    st.title("🎓 Kamaraj College FAQ Chatbot")
-    st.markdown("Ask anything related to **Kamaraj College of Engineering and Technology**!")
+st.set_page_config(page_title="🎙️ KCET Voice Assistant", layout="centered")
 
-    user_question = st.text_input("💬 Type your question here:")
+CSV_FILE = "kcet.csv"
+VECTOR_FILE = "vectorized.pkl"
+THRESHOLD = 0.8
+WAKE_WORD = "hey kcet"
 
-    if st.button("🔍 Get Answer"):
-        if not user_question.strip():
-            st.warning("⚠️ Please enter a question.")
-        else:
-            user_vector = vectorizer.transform([user_question])
-            predicted_label = model.predict(user_vector)[0]
-            predicted_answer = le.inverse_transform([predicted_label])[0]
-            st.success(f"🟢 **Answer:** {predicted_answer}")
-            speak_text(predicted_answer)
-
-# ------------------------------
-# 🎯 Execution Entry Point
-# ------------------------------
-if __name__ == "__main__":
-    import sys
-    if "gradio" in sys.argv:
-        launch_gradio()
+@st.cache_resource
+def load_or_vectorize():
+    if os.path.exists(VECTOR_FILE):
+        with open(VECTOR_FILE, "rb") as f:
+            vectorizer, vectors, df = pickle.load(f)
     else:
-        launch_streamlit()
+        if not os.path.exists(CSV_FILE):
+            st.error(f"'{CSV_FILE}' not found.")
+            st.stop()
+        df = pd.read_csv(CSV_FILE)
+        if 'Question' not in df.columns or 'Answer' not in df.columns:
+            st.error(f"'{CSV_FILE}' must contain 'Question' and 'Answer' columns.")
+            st.stop()
+        df['Question'] = df['Question'].astype(str).str.strip().str.lower()
+        vectorizer = TfidfVectorizer()
+        vectors = vectorizer.fit_transform(df['Question'])
+        with open(VECTOR_FILE, "wb") as f:
+            pickle.dump((vectorizer, vectors, df), f)
+    return vectorizer, vectors, df
+
+vectorizer, vectors, df = load_or_vectorize()
+
+if "audio_queue" not in st.session_state:
+    st.session_state["audio_queue"] = queue.Queue()
+if "listening_active_event" not in st.session_state:
+    st.session_state["listening_active_event"] = threading.Event()
+if "listening_thread" not in st.session_state:
+    st.session_state["listening_thread"] = None
+if "chat_history" not in st.session_state:
+    st.session_state["chat_history"] = []
+if "debug_message" not in st.session_state:
+    st.session_state["debug_message"] = "Initializing application..."
+if "show_history" not in st.session_state:
+    st.session_state["show_history"] = False
+
+st.markdown("""
+    <style>
+    .bot-bubble { background-color: #e0f7fa; color: #006064; padding: 1em; border-radius: 12px; }
+    .user-bubble { background-color: #fce4ec; color: #880e4f; padding: 1em; border-radius: 12px; text-align: right; }
+    .typing { font-style: italic; color: #9e9e9e; animation: pulse 1s infinite; }
+    @keyframes pulse { 0% { opacity: 0.3; } 50% { opacity: 1; } 100% { opacity: 0.3; } }
+    </style>
+""", unsafe_allow_html=True)
+
+st.title("🎙️ KCET Voice Assistant")
+status = st.empty()
+transcript_placeholder = st.empty()
+bot_response = st.empty()
+debug_placeholder = st.empty()
+
+class AudioProcessor:
+    def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
+        if st.session_state["listening_active_event"].is_set():
+            audio = frame.to_ndarray(format="s16", layout="mono")
+            try:
+                st.session_state["audio_queue"].put_nowait(audio)
+            except queue.Full:
+                st.session_state["debug_message"] = "Audio queue full."
+        return frame
+
+def listen_and_process_thread(audio_q, listening_event):
+    recognizer = sr.Recognizer()
+    recognizer.energy_threshold = 700
+    recognizer.dynamic_energy_threshold = True
+    recognizer.pause_threshold = 0.8
+    temp_wav_path = None
+
+    while listening_event.is_set():
+        try:
+            if audio_q.qsize() > 200:
+                audio_data_list = []
+                while not audio_q.empty():
+                    audio_data_list.append(audio_q.get_nowait())
+                if not audio_data_list:
+                    time.sleep(0.01)
+                    continue
+                combined_audio_data = np.concatenate(audio_data_list, axis=0).astype(np.int16)
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_wav:
+                    write(temp_wav.name, 16000, combined_audio_data)
+                    temp_wav_path = temp_wav.name
+
+                with sr.AudioFile(temp_wav_path) as source:
+                    try:
+                        audio = recognizer.record(source)
+                        query = recognizer.recognize_google(audio, language="en-IN").lower()
+                        if WAKE_WORD in query:
+                            processed_query = query.replace(WAKE_WORD, "").strip()
+                            if processed_query:
+                                query_vector = vectorizer.transform([processed_query])
+                                similarity = cosine_similarity(query_vector, vectors)
+                                max_sim = similarity.max()
+                                max_index = similarity.argmax()
+                                if max_sim >= THRESHOLD:
+                                    answer = df.iloc[max_index]['Answer']
+                                else:
+                                    answer = "🤖 I couldn't understand that. Please ask again."
+                                st.session_state["new_query"] = processed_query
+                                st.session_state["new_answer"] = answer
+                                st.rerun()
+                    except Exception as e:
+                        st.session_state["debug_message"] = f"Error: {e}"
+                    finally:
+                        if temp_wav_path and os.path.exists(temp_wav_path):
+                            os.unlink(temp_wav_path)
+            else:
+                time.sleep(0.05)
+        except Exception as e:
+            st.session_state["debug_message"] = f"Thread error: {e}"
+            listening_event.clear()
+            break
+
+webrtc_ctx = webrtc_streamer(
+    key="voice",
+    mode=WebRtcMode.SENDONLY,
+    audio_processor_factory=AudioProcessor,
+    media_stream_constraints={"audio": True, "video": False},
+    rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+)
+
+if webrtc_ctx.state.playing and not st.session_state["listening_active_event"].is_set():
+    st.session_state["listening_active_event"].set()
+    if st.session_state["listening_thread"] is None or not st.session_state["listening_thread"].is_alive():
+        st.session_state["listening_thread"] = threading.Thread(
+            target=listen_and_process_thread,
+            args=(st.session_state["audio_queue"], st.session_state["listening_active_event"]),
+            daemon=True
+        )
+        st.session_state["listening_thread"].start()
+    status.write("🐍 **Listening for 'Hey KCET'**...")
+else:
+    status.write("🔴 **Not listening.**")
+
+debug_placeholder.info(st.session_state["debug_message"])
+
+st.markdown("---")
+with st.form("manual_input_form", clear_on_submit=True):
+    user_query_manual = st.text_input("💬 **Type your question if you prefer not to speak:**")
+    submitted = st.form_submit_button("Submit")
+    if submitted and user_query_manual.strip():
+        query_vector = vectorizer.transform([user_query_manual.strip().lower()])
+        similarity = cosine_similarity(query_vector, vectors)
+        max_sim = similarity.max()
+        max_index = similarity.argmax()
+        if max_sim >= THRESHOLD:
+            answer = df.iloc[max_index]['Answer']
+        else:
+            answer = "🤖 I couldn't understand that. Please ask again."
+        st.session_state["new_query"] = user_query_manual.strip().lower()
+        st.session_state["new_answer"] = answer
+        st.rerun()
+
+if "new_query" in st.session_state and "new_answer" in st.session_state:
+    user_q = st.session_state.pop("new_query")
+    bot_a = st.session_state.pop("new_answer")
+    st.session_state["chat_history"].append((user_q, bot_a))
+    transcript_placeholder.markdown(f"<div class='user-bubble'>👤 **You:** {user_q}</div>", unsafe_allow_html=True)
+    bot_response.markdown("<div class='bot-bubble typing'>🤖 **KCET Bot:** Thinking...</div>", unsafe_allow_html=True)
+    time.sleep(0.5)
+    bot_response.markdown(f"<div class='bot-bubble'>🤖 **KCET Bot:** {bot_a}</div>", unsafe_allow_html=True)
+
+    try:
+        tts = gTTS(bot_a, lang='en')
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tts_fp:
+            tts.save(tts_fp.name)
+            tts_file_path = tts_fp.name
+        audio_bytes = open(tts_file_path, "rb").read()
+        audio_b64 = base64.b64encode(audio_bytes).decode()
+        audio_html = f"""
+        <audio controls autoplay hidden>
+            <source src="data:audio/mp3;base64,{audio_b64}" type="audio/mp3">
+            Your browser does not support the audio element.
+        </audio>
+        """
+        st.markdown(audio_html, unsafe_allow_html=True)
+        os.unlink(tts_file_path)
+    except Exception as e:
+        st.error(f"Audio error: {e}")
+
+st.markdown("---")
+st.markdown("## 📜 Chat History")
+button_label_history = "Hide History" if st.session_state["show_history"] else "Show History"
+if st.button(button_label_history):
+    st.session_state["show_history"] = not st.session_state["show_history"]
+
+if st.session_state["show_history"]:
+    if not st.session_state["chat_history"]:
+        st.info("No chat history yet. Start a conversation!")
+    else:
+        for user_hist, bot_hist in reversed(st.session_state["chat_history"]):
+            st.markdown(f"<div class='user-bubble'>👤 **You:** {user_hist}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='bot-bubble'>🤖 **KCET Bot:** {bot_hist}</div>", unsafe_allow_html=True)
+
