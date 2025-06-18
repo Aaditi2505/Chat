@@ -7,11 +7,7 @@ Original file is located at
     https://colab.research.google.com/drive/17H7GeXLk5E9wbHMdY1tS4bPDVAQNMKMj
 """
 
-pip install streamlit pandas scikit-learn
 
-!pip install gTTS
-
-!pip install playsound
 import playsound
 
 from gtts import gTTS
