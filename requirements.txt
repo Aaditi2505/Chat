@@ -1,5 +1,7 @@
-streamlit
-scikit-learn
+gtts
+playsound
 pandas
-numpy
-matplotlib
+scikit-learn
+streamlit
+gradio
+openai-whisper
