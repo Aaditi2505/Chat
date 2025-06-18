@@ -75,9 +75,6 @@ if st.button("🔍 Get Answer"):
         # Display answer
         st.success(f"🟢 **Answer:** {predicted_answer}")
 
-pip install gradio pyttsx3 scikit-learn pandas
-
-pip install gradio pyttsx3 pandas scikit-learn openai-whisper
 
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
