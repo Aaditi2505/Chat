@@ -8,7 +8,7 @@ Original file is located at
 """
 
 
-# Requirements: pandas, sklearn, streamlit, gtts, playsound, gradio, whisper, pyttsx3
+# requirements: pandas, sklearn, streamlit, gtts, playsound, gradio, whisper
 
 # ------------------------------
 # 🧠 Model and Data Preparation
@@ -18,7 +18,6 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import LabelEncoder
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-# Load CSV and train model
 df = pd.read_csv("kamaraj_college_faq.csv")
 df.dropna(inplace=True)
 
@@ -33,15 +32,28 @@ model = LogisticRegression()
 model.fit(X, y)
 
 # ------------------------------
-# 🔊 Text-to-Speech (Pyttsx3)
+# 🔊 Text-to-Speech (gTTS-based fallback)
 # ------------------------------
-import pyttsx3
+try:
+    import pyttsx3
 
-def speak_text(text):
-    engine = pyttsx3.init()
-    engine.setProperty('rate', 150)
-    engine.say(text)
-    engine.runAndWait()
+    def speak_text(text):
+        engine = pyttsx3.init()
+        engine.setProperty('rate', 150)
+        engine.say(text)
+        engine.runAndWait()
+
+except ImportError:
+    from gtts import gTTS
+    import playsound
+    import os
+
+    def speak_text(text):
+        tts = gTTS(text=text, lang='en')
+        filename = "temp_voice.mp3"
+        tts.save(filename)
+        playsound.playsound(filename)
+        os.remove(filename)
 
 # ------------------------------
 # 🎧 Whisper Voice Recognition
@@ -63,17 +75,14 @@ def chatbot(audio=None, text=None):
     else:
         return "❗ Please ask a question."
 
-    # Predict answer
     vec = vectorizer.transform([user_input])
     prediction = model.predict(vec)[0]
     answer = le.inverse_transform([prediction])[0]
 
-    # Speak answer
     speak_text(answer)
 
     return f"🗣️ You asked: {user_input}\n\n✅ Answer: {answer}"
 
-# Gradio interface
 def launch_gradio():
     iface = gr.Interface(
         fn=chatbot,
@@ -110,7 +119,7 @@ def launch_streamlit():
             speak_text(predicted_answer)
 
 # ------------------------------
-# 🎯 Execution
+# 🎯 Execution Entry Point
 # ------------------------------
 if __name__ == "__main__":
     import sys
