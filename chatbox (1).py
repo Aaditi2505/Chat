@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import LabelEncoder
 from sklearn.feature_extraction.text import TfidfVectorizer # Import TfidfVectorizer
 
-ques=pd.read_csv('/content/kamaraj_college_faq.csv')
+ques=pd.read_csv('/content/kamaraj_faq_paraphrased_top10.csv')
 ques.head()
 
 ques.isnull().sum()
