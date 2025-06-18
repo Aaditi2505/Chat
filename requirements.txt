@@ -1,7 +1,0 @@
-gtts
-playsound
-pandas
-scikit-learn
-streamlit
-gradio
-openai-whisper
