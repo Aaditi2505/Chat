@@ -7,13 +7,9 @@ Original file is located at
     https://colab.research.google.com/drive/17H7GeXLk5E9wbHMdY1tS4bPDVAQNMKMj
 """
 
-!python -m pip install playsound==1.2.2
 
-pip install streamlit pandas scikit-learn
 
-!pip install gTTS
 
-!pip install playsound
 import playsound
 
 from gtts import gTTS
@@ -81,9 +77,6 @@ if st.button("🔍 Get Answer"):
         # Display answer
         st.success(f"🟢 **Answer:** {predicted_answer}")
 
-pip install gradio pyttsx3 scikit-learn pandas
-
-pip install gradio pyttsx3 pandas scikit-learn openai-whisper
 
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
