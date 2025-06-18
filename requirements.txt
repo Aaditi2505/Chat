@@ -1,21 +1,11 @@
-
-matplotlib
-numpy
-pandas
-scikit-learn
-matplotlib
-sklearn
-gtts
-os
-uuid
-gradio
-whisper
-shutil
-SpeechRecognition
 gradio
 pandas
 scikit-learn
 gTTS
 openai-whisper
 ffmpeg-python
+torch  # required by whisper
+
+
+
 
